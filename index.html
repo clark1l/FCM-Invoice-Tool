@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FirstCut Media Invoicing Tool</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @media print { .no-print { display: none !important; } }
+
+        /* Exactly 8.5x11 to ensure 1-page PDF export */
+        #invoice-card {
+            width: 8.5in;
+            height: 11in; 
+            padding: 0.5in 0.6in;
+            margin: 0 auto;
+            background: white;
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+        }
+
+        .status-unpaid { color: #dc2626; border-color: #dc2626; }
+        .status-paid { color: #16a34a; border-color: #16a34a; }
+        
+        button:disabled {
+            background-color: #cbd5e1 !important;
+            cursor: not-allowed;
+            box-shadow: none !important;
+        }
+
+        .invoice-wrapper {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px 0;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 font-sans">
+
+    <!-- Controls Panel -->
+    <div class="max-w-4xl mx-auto my-6 p-6 bg-white rounded-xl shadow-lg no-print border border-gray-200">
+        <div class="flex justify-between items-center mb-6 border-b pb-4">
+            <h2 class="text-2xl font-bold text-gray-800 tracking-tight">FirstCut Media Invoicing Tool</h2>
+            <div class="flex items-center bg-gray-100 p-1 rounded-lg">
+                <button id="btn-contractor" onclick="setMode('contractor')" class="px-4 py-2 rounded-md text-sm font-bold transition bg-white shadow text-blue-600">Contractor Mode</button>
+                <button id="btn-boss" onclick="setMode('boss')" class="px-4 py-2 rounded-md text-sm font-bold transition text-gray-500">Boss Mode (Paid)</button>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+                <label class="block text-xs font-bold uppercase text-gray-400">Invoice # (Auto)</label>
+                <input type="text" id="input-num" class="w-full border p-2 rounded mt-1 bg-gray-50 text-gray-500 cursor-not-allowed" readonly>
+            </div>
+            <div>
+                <!-- LABEL UPDATED VIA JS -->
+                <label class="block text-xs font-bold uppercase text-gray-500"><span id="name-field-label">Contractor Name</span> <span class="text-red-500">*</span></label>
+                <input type="text" id="input-name" placeholder="John Doe" class="w-full border p-2 rounded mt-1" oninput="update()">
+            </div>
+            <div>
+                <label class="block text-xs font-bold uppercase text-gray-500">Amount ($) <span class="text-red-500">*</span></label>
+                <input type="number" id="input-amount" placeholder="0.00" class="w-full border p-2 rounded mt-1" oninput="update()">
+            </div>
+            
+            <div>
+                <label class="block text-xs font-bold uppercase text-blue-600">Select Role</label>
+                <select id="role-select" class="w-full border p-2 rounded mt-1 bg-blue-50 font-medium" onchange="applyTemplate()">
+                    <option value="custom">Custom / Other</option>
+                    <option value="editor">Editor</option>
+                    <option value="ideation">Ideation Lead</option>
+                    <option value="distribution">Distribution Manager</option>
+                </select>
+            </div>
+
+            <div class="md:col-span-2">
+                <label class="block text-xs font-bold uppercase text-gray-500">Main Service Description <span class="text-red-500">*</span></label>
+                <textarea id="input-services" placeholder="e.g. Payment for thumbnail design services rendered." class="w-full border p-2 rounded mt-1" rows="1" oninput="update()"></textarea>
+            </div>
+
+            <div class="md:col-span-3">
+                <label class="block text-xs font-bold uppercase text-gray-500">Extra Details (Optional)</label>
+                <input type="text" id="input-extra" placeholder="e.g. Project: YouTube Shorts, Week of Oct 12" class="w-full border p-2 rounded mt-1" oninput="update()">
+            </div>
+
+            <!-- Boss Only Fields -->
+            <div id="boss-fields" class="hidden md:col-span-3 grid grid-cols-1 md:grid-cols-3 gap-4 border-t pt-4 mt-2">
+                <div>
+                    <label class="block text-xs font-bold uppercase text-blue-600">Payment Method</label>
+                    <select id="input-method" class="w-full border p-2 rounded mt-1" onchange="update()">
+                        <option value="PayPal">PayPal</option>
+                        <option value="Wise">Wise</option>
+                        <option value="GCash">GCash</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold uppercase text-blue-600">Transaction ID / Ref <span class="text-red-500">*</span></label>
+                    <input type="text" id="input-ref" placeholder="TXN123456789" class="w-full border p-2 rounded mt-1" oninput="update()">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold uppercase text-blue-600">Date Paid</label>
+                    <input type="date" id="input-date-paid" class="w-full border p-2 rounded mt-1" onchange="update()">
+                </div>
+            </div>
+        </div>
+
+        <button id="download-btn" disabled onclick="downloadPDF()" class="mt-6 w-full bg-blue-600 text-white font-bold py-4 rounded-lg hover:bg-blue-700 transition flex items-center justify-center gap-2 shadow-lg">
+            Download PDF
+        </button>
+        <p id="validation-msg" class="text-center text-xs text-gray-400 mt-2 italic font-medium">Please fill out all required fields (*) to enable download.</p>
+    </div>
+
+    <!-- The Invoice Template -->
+    <div class="invoice-wrapper no-print bg-gray-200">
+        <div id="invoice-card" class="shadow-2xl">
+            <!-- Header -->
+            <div class="flex justify-between items-start mb-8">
+                <div>
+                    <img src="https://i.imgur.com/2XkEzwi.png" alt="Company Logo" class="h-14 mb-4">
+                    <h1 id="doc-title" class="text-4xl font-black tracking-tighter text-gray-900">INVOICE</h1>
+                </div>
+                <div class="text-right">
+                    <div id="status-badge" class="inline-block px-4 py-1 border-2 font-black rounded-md text-sm mb-4 status-unpaid uppercase">UNPAID</div>
+                    <p class="text-xs font-bold text-gray-400 uppercase">Date Issued</p>
+                    <p id="display-date" class="text-gray-800 font-medium"></p>
+                    
+                    <div id="due-date-container">
+                        <p class="text-xs font-bold text-gray-400 uppercase mt-4">Due Date</p>
+                        <p id="display-due-date" class="text-gray-800 font-bold"></p>
+                    </div>
+
+                    <p class="text-xs font-bold text-gray-400 uppercase mt-4">Invoice Number</p>
+                    <p id="display-num" class="text-gray-800 font-medium"></p>
+                </div>
+            </div>
+
+            <!-- Addresses -->
+            <div class="grid grid-cols-2 gap-10 mb-8 border-t border-b py-6">
+                <div>
+                    <!-- TEXT UPDATED VIA JS -->
+                    <h3 id="from-label-doc" class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">From (Contractor)</h3>
+                    <p id="display-name" class="text-xl font-bold text-gray-800 italic">[Name]</p>
+                </div>
+                <div>
+                    <h3 class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">Bill To</h3>
+                    <p class="text-xl font-bold text-gray-800 leading-tight">FirstCut Media LLC</p>
+                    <p class="text-gray-500 text-xs">30 N Gould St Ste R, Sheridan, WY 82801</p>
+                    <p class="text-blue-600 text-xs font-medium">firstcutmediaco@gmail.com</p>
+                </div>
+            </div>
+
+            <!-- Table -->
+            <table class="w-full mb-6">
+                <thead>
+                    <tr class="text-left border-b-2 border-gray-900">
+                        <th class="pb-3 text-xs font-bold uppercase tracking-widest text-gray-400">Description of Services</th>
+                        <th class="pb-3 text-right text-xs font-bold uppercase tracking-widest text-gray-400">Total</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td class="py-6 align-top">
+                            <div id="display-services" class="text-gray-800 text-lg font-normal leading-tight mb-1 whitespace-pre-wrap">Please enter service details...</div>
+                            <div id="display-extra" class="text-gray-500 text-sm italic whitespace-pre-wrap"></div>
+                        </td>
+                        <td id="display-amount" class="py-6 text-right text-2xl font-bold text-gray-900 align-top tracking-tighter">$0.00</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <!-- Payment Details -->
+            <div id="payment-info-section" class="hidden bg-gray-50 p-6 rounded-xl grid grid-cols-3 gap-4 mb-6 border border-gray-100">
+                <div>
+                    <p class="text-[10px] font-bold text-gray-400 uppercase">Payment Method</p>
+                    <p id="display-method" class="text-sm font-bold text-gray-800">--</p>
+                </div>
+                <div>
+                    <p class="text-[10px] font-bold text-gray-400 uppercase">Ref / Transaction ID</p>
+                    <p id="display-ref" class="text-sm font-bold text-gray-800">--</p>
+                </div>
+                <div>
+                    <p class="text-[10px] font-bold text-gray-400 uppercase">Date Paid</p>
+                    <p id="display-date-paid" class="text-sm font-bold text-gray-800">--</p>
+                </div>
+            </div>
+
+            <!-- Total and Footer -->
+            <div class="mt-auto">
+                <div class="flex justify-end pt-4 border-t-4 border-gray-900">
+                    <div class="text-right">
+                        <span id="balance-label" class="text-xs font-bold uppercase text-gray-400 block mb-1">Balance Due (USD)</span>
+                        <span id="final-amount" class="text-5xl font-black text-gray-900 tracking-tighter">$0.00</span>
+                    </div>
+                </div>
+                <footer class="mt-12 border-t pt-4 text-center">
+                    <p class="text-[10px] text-gray-400 font-bold uppercase tracking-widest">Official FirstCut Media LLC Document</p>
+                </footer>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentMode = 'contractor';
+
+        const roleTemplates = {
+            editor: "Payment for video editing and production services rendered.",
+            ideation: "Payment for content ideation, research, and planning services rendered.",
+            distribution: "Payment for content distribution, posting, and channel management services rendered.",
+            custom: ""
+        };
+
+        const randomID = "FCM-" + Math.floor(1000 + Math.random() * 9000);
+        document.getElementById('input-num').value = randomID;
+        document.getElementById('display-num').innerText = "#" + randomID;
+
+        const today = new Date();
+        document.getElementById('display-date').innerText = today.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+        
+        const dueDate = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 7);
+        document.getElementById('display-due-date').innerText = dueDate.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+
+        const offset = today.getTimezoneOffset();
+        const localISODate = new Date(today.getTime() - (offset*60*1000)).toISOString().split('T')[0];
+        document.getElementById('input-date-paid').value = localISODate;
+
+        function applyTemplate() {
+            const role = document.getElementById('role-select').value;
+            const descInput = document.getElementById('input-services');
+            descInput.value = roleTemplates[role];
+            update();
+        }
+
+        function setMode(mode) {
+            currentMode = mode;
+            const bCont = document.getElementById('btn-contractor');
+            const bBoss = document.getElementById('btn-boss');
+            const bossFields = document.getElementById('boss-fields');
+            const paymentSection = document.getElementById('payment-info-section');
+            const statusBadge = document.getElementById('status-badge');
+            const docTitle = document.getElementById('doc-title');
+            const dueContainer = document.getElementById('due-date-container');
+            const balanceLabel = document.getElementById('balance-label');
+            
+            // Labels to change
+            const inputNameLabel = document.getElementById('name-field-label');
+            const fromLabelDoc = document.getElementById('from-label-doc');
+
+            if(mode === 'boss') {
+                bBoss.className = "px-4 py-2 rounded-md text-sm font-bold transition bg-white shadow text-blue-600";
+                bCont.className = "px-4 py-2 rounded-md text-sm font-bold transition text-gray-500";
+                bossFields.classList.remove('hidden');
+                paymentSection.classList.remove('hidden');
+                dueContainer.classList.add('hidden');
+                statusBadge.innerText = "PAID";
+                statusBadge.className = "inline-block px-4 py-1 border-2 font-black rounded-md text-sm mb-4 status-paid uppercase";
+                docTitle.innerText = "PAYMENT RECEIPT";
+                balanceLabel.innerText = "Balance Paid (USD)";
+                
+                // NEW: Boss Mode Specific Label Changes
+                inputNameLabel.innerText = "Name";
+                fromLabelDoc.innerText = "From";
+            } else {
+                bCont.className = "px-4 py-2 rounded-md text-sm font-bold transition bg-white shadow text-blue-600";
+                bBoss.className = "px-4 py-2 rounded-md text-sm font-bold transition text-gray-500";
+                bossFields.classList.add('hidden');
+                paymentSection.classList.add('hidden');
+                dueContainer.classList.remove('hidden');
+                statusBadge.innerText = "UNPAID";
+                statusBadge.className = "inline-block px-4 py-1 border-2 font-black rounded-md text-sm mb-4 status-unpaid uppercase";
+                docTitle.innerText = "INVOICE";
+                balanceLabel.innerText = "Balance Due (USD)";
+                
+                // Revert to Contractor Labels
+                inputNameLabel.innerText = "Contractor Name";
+                fromLabelDoc.innerText = "From (Contractor)";
+            }
+            update();
+        }
+
+        function update() {
+            const name = document.getElementById('input-name').value;
+            const amount = document.getElementById('input-amount').value;
+            const services = document.getElementById('input-services').value;
+            const extra = document.getElementById('input-extra').value;
+            const ref = document.getElementById('input-ref').value;
+            const method = document.getElementById('input-method').value;
+            
+            document.getElementById('display-name').innerText = name || (currentMode === 'boss' ? "[Name]" : "[Contractor Name]");
+            document.getElementById('display-amount').innerText = '$' + (parseFloat(amount) || 0).toLocaleString('en-US', {minimumFractionDigits: 2});
+            document.getElementById('final-amount').innerText = '$' + (parseFloat(amount) || 0).toLocaleString('en-US', {minimumFractionDigits: 2});
+            document.getElementById('display-services').innerText = services || "Please enter service details...";
+            document.getElementById('display-extra').innerText = extra || "";
+            document.getElementById('display-method').innerText = method;
+            document.getElementById('display-ref').innerText = ref || "N/A";
+
+            const datePaidInput = document.getElementById('input-date-paid').value;
+            if(datePaidInput) {
+                const parts = datePaidInput.split('-');
+                const d = new Date(parts[0], parts[1] - 1, parts[2]);
+                document.getElementById('display-date-paid').innerText = d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric'});
+            }
+
+            const isNameValid = name.trim().length > 0;
+            const isAmountValid = amount > 0;
+            const isServiceValid = services.trim().length > 0;
+            const isRefValid = currentMode === 'boss' ? ref.trim().length > 0 : true;
+
+            const btn = document.getElementById('download-btn');
+            const msg = document.getElementById('validation-msg');
+            if (isNameValid && isAmountValid && isServiceValid && isRefValid) {
+                btn.disabled = false;
+                msg.classList.add('hidden');
+            } else {
+                btn.disabled = true;
+                msg.classList.remove('hidden');
+            }
+        }
+
+        function downloadPDF() {
+            const element = document.getElementById('invoice-card');
+            const name = document.getElementById('input-name').value || "Unnamed";
+            const now = new Date();
+            const yearShort = now.getFullYear().toString().slice(-2);
+            const month = now.getMonth() + 1;
+            const day = now.getDate();
+            const suffix = currentMode === 'boss' ? "Payment" : "Request";
+            const fileName = `${yearShort}_${month}_${day} ${name} ${suffix}.pdf`;
+
+            const opt = {
+                margin: 0,
+                filename: fileName,
+                image: { type: 'jpeg', quality: 1 },
+                html2canvas: { scale: 3, useCORS: true, logging: false, scrollY: 0, scrollX: 0 },
+                jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' }
+            };
+
+            html2pdf().set(opt).from(element).save();
+        }
+    </script>
+</body>
+</html>
